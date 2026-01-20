@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rain on Umbrella</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            border-radius: 8px;
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="rainCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('rainCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        canvas.width = 900;
+        canvas.height = 700;
+
+        // Colors
+        const colors = {
+            sky: ['#1a1a2e', '#16213e', '#0f3460'],
+            umbrella: {
+                fabric: '#e94560',
+                fabricDark: '#b8304f',
+                fabricHighlight: '#ff6b6b',
+                pole: '#4a4a4a',
+                poleHighlight: '#6a6a6a'
+            },
+            rain: 'rgba(200, 220, 255, 0.6)',
+            splash: 'rgba(180, 200, 230, 0.8)',
+            ground: '#1a1a2e',
+            puddle: 'rgba(100, 150, 200, 0.3)'
+        };
+
+        // Umbrella properties
+        const umbrella = {
+            x: canvas.width / 2,
+            y: canvas.height / 2 - 50,
+            width: 280,
+            height: 80,
+            poleLength: 200,
+            angle: 0,
+            targetAngle: 0,
+            segments: 8
+        };
+
+        // Ground level
+        const groundY = canvas.height - 80;
+
+        // Rain drops
+        let raindrops = [];
+        const maxRaindrops = 400;
+
+        // Splashes on umbrella
+        let umbrellaSplashes = [];
+
+        // Ground ripples
+        let ripples = [];
+
+        // Sliding drops on umbrella
+        let slidingDrops = [];
+
+        // Wind
+        let wind = {
+            strength: 0,
+            targetStrength: 0,
+            gustTimer: 0,
+            gustDuration: 0
+        };
+
+        // Time tracking
+        let lastTime = 0;
+
+        // Raindrop class
+        class Raindrop {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * (canvas.width + 200) - 100;
+                this.y = -Math.random() * 200 - 50;
+                this.length = Math.random() * 20 + 15;
+                this.speed = Math.random() * 8 + 12;
+                this.thickness = Math.random() * 1.5 + 0.5;
+                this.opacity = Math.random() * 0.4 + 0.4;
+            }
+
+            update(windOffset) {
+                this.y += this.speed;
+                this.x += windOffset * 0.3 + wind.strength * 2;
+
+                // Check collision with umbrella
+                if (this.checkUmbrellaCollision()) {
+                    return true;
+                }
+
+                // Check if hit ground
+                if (this.y > groundY) {
+                    createGroundRipple(this.x, groundY);
+                    this.reset();
+                }
+
+                // Reset if off screen
+                if (this.x < -50 || this.x > canvas.width + 50) {
+                    this.reset();
+                }
+
+                return false;
+            }
+
+            checkUmbrellaCollision() {
+                // Get umbrella curve points
+                const umbrellaLeft = umbrella.x - umbrella.width / 2;
+                const umbrellaRight = umbrella.x + umbrella.width / 2;
+                
+                // Rotate point relative to umbrella center
+                const cosA = Math.cos(-umbrella.angle);
+                const sinA = Math.sin(-umbrella.angle);
+                const relX = this.x - umbrella.x;
+                const relY = this.y - umbrella.y;
+                const rotX = relX * cosA - relY * sinA;
+                const rotY = relX * sinA + relY * cosA;
+
+                // Check if within umbrella horizontal bounds
+                if (rotX >= -umbrella.width / 2 && rotX <= umbrella.width / 2) {
+                    // Calculate umbrella curve height at this x position
+                    const normalizedX = rotX / (umbrella.width / 2);
+                    const curveY = -umbrella.height * (1 - normalizedX * normalizedX);
+                    
+                    if (rotY >= curveY - 10 && rotY <= curveY + 15) {
+                        // Hit the umbrella!
+                        createUmbrellaSplash(this.x, this.y, normalizedX);
+                        
+                        // Sometimes create a sliding drop
+                        if (Math.random() < 0.3) {
+                            createSlidingDrop(rotX, this.x, this.y);
+                        }
+                        
+                        this.reset();
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.strokeStyle = `rgba(200, 220, 255, ${this.opacity})`;
+                ctx.lineWidth = this.thickness;
+                ctx.lineCap = 'round';
+                
+                const windAngle = Math.atan2(this.speed, wind.strength * 2);
+                const endX = this.x + Math.sin(windAngle) * this.length * 0.3;
+                const endY = this.y + this.length;
+                
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // Umbrella splash effect
+        class UmbrellaSplash {
+            constructor(x, y, intensity) {
+                this.x = x;
+                this.y = y;
+                this.particles = [];
+                const count = Math.floor(Math.random() * 4) + 3;
+                for (let i = 0; i < count; i++) {
+                    this.particles.push({
+                        x: 0,
+                        y: 0,
+                        vx: (Math.random() - 0.5) * 4 + intensity * 2,
+                        vy: -Math.random() * 3 - 1,
+                        size: Math.random() * 2 + 1,
+                        life: 1
+                    });
+                }
+            }
+
+            update() {
+                let alive = false;
+                this.particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.15;
+                    p.life -= 0.04;
+                    if (p.life > 0) alive = true;
+                });
+                return alive;
+            }
+
+            draw() {
+                this.particles.forEach(p => {
+                    if (p.life > 0) {
+                        ctx.save();
+                        ctx.fillStyle = `rgba(200, 220, 255, ${p.life * 0.8})`;
+                        ctx.beginPath();
+                        ctx.arc(this.x + p.x, this.y + p.y, p.size * p.life, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                });
+            }
+        }
+
+        // Ground ripple effect
+        class Ripple {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 2;
+                this.maxRadius = Math.random() * 15 + 10;
+                this.opacity = 0.6;
+                this.speed = Math.random() * 0.8 + 0.5;
+            }
+
+            update() {
+                this.radius += this.speed;
+                this.opacity = 0.6 * (1 - this.radius / this.maxRadius);
+                return this.radius < this.maxRadius;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.strokeStyle = `rgba(150, 180, 220, ${this.opacity})`;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y, this.radius, this.radius * 0.3, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // Sliding drop on umbrella
+        class SlidingDrop {
+            constructor(startX, worldX, worldY) {
+                this.startX = startX;
+                this.x = worldX;
+                this.y = worldY;
+                this.progress = 0;
+                this.speed = Math.random() * 0.02 + 0.015;
+                this.size = Math.random() * 3 + 2;
+                this.side = startX > 0 ? 1 : -1;
+            }
+
+            update() {
+                this.progress += this.speed;
+                
+                // Move along umbrella curve towards edge
+                const t = this.progress + Math.abs(this.startX / (umbrella.width / 2));
+                if (t >= 1) {
+                    // Drop off the edge
+                    const edgeX = umbrella.x + (this.side * umbrella.width / 2) * Math.cos(umbrella.angle);
+                    const edgeY = umbrella.y + (this.side * umbrella.width / 2) * Math.sin(umbrella.angle);
+                    createDrippingDrop(edgeX, edgeY);
+                    return false;
+                }
+
+                // Calculate position on curve
+                const normX = this.side * t;
+                const curveY = -umbrella.height * (1 - normX * normX);
+                
+                // Rotate by umbrella angle
+                const cosA = Math.cos(umbrella.angle);
+                const sinA = Math.sin(umbrella.angle);
+                const localX = normX * umbrella.width / 2;
+                
+                this.x = umbrella.x + localX * cosA - curveY * sinA;
+                this.y = umbrella.y + localX * sinA + curveY * cosA;
+
+                return true;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.fillStyle = `rgba(180, 210, 255, 0.7)`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Dripping drops from umbrella edge
+        let drippingDrops = [];
+        
+        class DrippingDrop {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vy = 1;
+                this.size = Math.random() * 3 + 2;
+            }
+
+            update() {
+                this.vy += 0.3;
+                this.y += this.vy;
+                this.x += wind.strength * 0.5;
+                
+                if (this.y > groundY) {
+                    createGroundRipple(this.x, groundY);
+                    return false;
+                }
+                return true;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.fillStyle = 'rgba(180, 210, 255, 0.8)';
+                ctx.beginPath();
+                // Teardrop shape
+                ctx.ellipse(this.x, this.y, this.size * 0.6, this.size, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function createDrippingDrop(x, y) {
+            drippingDrops.push(new DrippingDrop(x, y));
+        }
+
+        function createUmbrellaSplash(x, y, intensity) {
+            umbrellaSplashes.push(new UmbrellaSplash(x, y, intensity));
+        }
+
+        function createGroundRipple(x, y) {
+            ripples.push(new Ripple(x, y));
+        }
+
+        function createSlidingDrop(startX, worldX, worldY) {
+            slidingDrops.push(new SlidingDrop(startX, worldX, worldY));
+        }
+
+        // Initialize raindrops
+        function initRain() {
+            for (let i = 0; i < maxRaindrops; i++) {
+                raindrops.push(new Raindrop());
+            }
+        }
+
+        // Draw background
+        function drawBackground() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#1a1a2e');
+            gradient.addColorStop(0.5, '#16213e');
+            gradient.addColorStop(1, '#0f3460');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Draw ground with puddles
+        function drawGround() {
+            // Main ground
+            ctx.fillStyle = '#0d1b2a';
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+            
+            // Ground line
+            ctx.strokeStyle = '#1b263b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, groundY);
+            ctx.lineTo(canvas.width, groundY);
+            ctx.stroke();
+
+            // Puddle area under umbrella
+            const puddleGradient = ctx.createRadialGradient(
+                umbrella.x, groundY + 20, 10,
+                umbrella.x, groundY + 20, 150
+            );
+            puddleGradient.addColorStop(0, 'rgba(100, 150, 200, 0.25)');
+            puddleGradient.addColorStop(1, 'rgba(100, 150, 200, 0)');
+            ctx.fillStyle = puddleGradient;
+            ctx.beginPath();
+            ctx.ellipse(umbrella.x, groundY + 5, 180, 25, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw umbrella
+        function drawUmbrella() {
+            ctx.save();
+            ctx.translate(umbrella.x, umbrella.y);
+            ctx.rotate(umbrella.angle);
+
+            // Draw umbrella fabric with gradient and segments
+            for (let i = 0; i < umbrella.segments; i++) {
+                const startAngle = (i / umbrella.segments) * Math.PI - Math.PI / 2;
+                const endAngle = ((i + 1) / umbrella.segments) * Math.PI - Math.PI / 2;
+                
+                const isLight = i % 2 === 0;
+                
+                // Create gradient for each segment
+                const gradient = ctx.createLinearGradient(
+                    -umbrella.width / 2, -umbrella.height,
+                    umbrella.width / 2, 0
+                );
+                
+                if (isLight) {
+                    gradient.addColorStop(0, colors.umbrella.fabricHighlight);
+                    gradient.addColorStop(0.5, colors.umbrella.fabric);
+                    gradient.addColorStop(1, colors.umbrella.fabricDark);
+                } else {
+                    gradient.addColorStop(0, colors.umbrella.fabric);
+                    gradient.addColorStop(0.5, colors.umbrella.fabricDark);
+                    gradient.addColorStop(1, '#8b2040');
+                }
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                
+                // Draw curved segment
+                const segWidth = umbrella.width / umbrella.segments;
+                const x1 = -umbrella.width / 2 + i * segWidth;
+                const x2 = x1 + segWidth;
+                
+                const y1 = -umbrella.height * (1 - Math.pow(x1 / (umbrella.width / 2), 2));
+                const y2 = -umbrella.height * (1 - Math.pow(x2 / (umbrella.width / 2), 2));
+                
+                ctx.moveTo(0, 0);
+                ctx.lineTo(x1, y1);
+                
+                // Bezier curve for smooth edge
+                const midX = (x1 + x2) / 2;
+                const midY = -umbrella.height * (1 - Math.pow(midX / (umbrella.width / 2), 2)) - 3;
+                ctx.quadraticCurveTo(midX, midY, x2, y2);
+                ctx.lineTo(0, 0);
+                ctx.fill();
+            }
+
+            // Umbrella rim
+            ctx.strokeStyle = colors.umbrella.fabricDark;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(-umbrella.width / 2, 0);
+            ctx.quadraticCurveTo(0, -umbrella.height - 5, umbrella.width / 2, 0);
+            ctx.stroke();
+
+            // Small scalloped edges
+            ctx.strokeStyle = colors.umbrella.fabricDark;
+            ctx.lineWidth = 2;
+            for (let i = 0; i <= umbrella.segments; i++) {
+                const x = -umbrella.width / 2 + i * (umbrella.width / umbrella.segments);
+                const y = -umbrella.height * (1 - Math.pow(x / (umbrella.width / 2), 2));
+                ctx.beginPath();
+                ctx.arc(x, y + 5, 4, 0, Math.PI);
+                ctx.stroke();
+            }
+
+            // Pole
+            ctx.strokeStyle = colors.umbrella.pole;
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, umbrella.poleLength);
+            ctx.stroke();
+
+            // Pole highlight
+            ctx.strokeStyle = colors.umbrella.poleHighlight;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-1, 5);
+            ctx.lineTo(-1, umbrella.poleLength - 10);
+            ctx.stroke();
+
+            // Top tip
+            ctx.fillStyle = colors.umbrella.pole;
+            ctx.beginPath();
+            ctx.arc(0, -umbrella.height, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Handle (curved hook)
+            ctx.strokeStyle = colors.umbrella.pole;
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(15, umbrella.poleLength, 15, Math.PI * 0.5, Math.PI * 1.5);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        // Update wind gusts
+        function updateWind(deltaTime) {
+            wind.gustTimer += deltaTime;
+            
+            // Random wind gusts every 3-7 seconds
+            if (wind.gustTimer > wind.gustDuration) {
+                wind.gustTimer = 0;
+                wind.gustDuration = Math.random() * 4000 + 3000;
+                wind.targetStrength = (Math.random() - 0.5) * 4;
+            }
+
+            // Smooth wind transition
+            wind.strength += (wind.targetStrength - wind.strength) * 0.02;
+
+            // Update umbrella angle based on wind
+            umbrella.targetAngle = wind.strength * 0.08;
+            umbrella.angle += (umbrella.targetAngle - umbrella.angle) * 0.05;
+        }
+
+        // Main animation loop
+        function animate(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw background
+            drawBackground();
+
+            // Update wind
+            updateWind(deltaTime);
+
+            // Draw ground and puddles
+            drawGround();
+
+            // Draw ripples
+            ripples = ripples.filter(r => {
+                r.draw();
+                return r.update();
+            });
+
+            // Update and draw raindrops
+            raindrops.forEach(drop => {
+                drop.update(wind.strength);
+                drop.draw();
+            });
+
+            // Draw umbrella
+            drawUmbrella();
+
+            // Update and draw umbrella splashes
+            umbrellaSplashes = umbrellaSplashes.filter(s => {
+                s.draw();
+                return s.update();
+            });
+
+            // Update and draw sliding drops
+            slidingDrops = slidingDrops.filter(d => {
+                d.draw();
+                return d.update();
+            });
+
+            // Update and draw dripping drops
+            drippingDrops = drippingDrops.filter(d => {
+                d.draw();
+                return d.update();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        // Start animation
+        initRain();
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>
